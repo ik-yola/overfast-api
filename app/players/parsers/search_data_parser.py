@@ -5,16 +5,15 @@ from app.overfast_logger import logger
 from app.parsers import JSONParser
 from app.unlocks_manager import UnlocksManager
 
-
 class SearchDataParser(JSONParser):
     """Static Data Parser class"""
 
     root_path = settings.search_account_path
 
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    def __init__(self, httpx_client, **kwargs):
+        super().__init__(httpx_client=httpx_client, **kwargs)
         self.player_id = kwargs.get("player_id")
-        self.unlocks_manager = UnlocksManager()
+        self.unlocks_manager = UnlocksManager(httpx_client=httpx_client)
 
     async def parse_data(self) -> dict:
         # We'll use the battletag for searching

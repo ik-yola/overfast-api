@@ -4,25 +4,12 @@ from fastapi import HTTPException, status
 from .cache_manager import CacheManager
 from .config import settings
 from .helpers import send_discord_webhook_message
-from .metaclasses import Singleton
 from .overfast_logger import logger
 
-
-class OverFastClient(metaclass=Singleton):
-    def __init__(self):
+class OverFastClient:
+    def __init__(self, httpx_client: httpx.AsyncClient):
         self.cache_manager = CacheManager()
-        self.client = httpx.AsyncClient(
-            headers={
-                "User-Agent": (
-                    f"OverFastAPI v{settings.app_version} - "
-                    "https://github.com/TeKrop/overfast-api"
-                ),
-                "From": "valentin.porchet@proton.me",
-            },
-            http2=True,
-            timeout=10,
-            follow_redirects=True,
-        )
+        self.client = httpx_client  # <- Use the shared client
 
     async def get(self, url: str, **kwargs) -> httpx.Response:
         """Make an HTTP GET request with custom headers and retrieve the result"""
@@ -34,13 +21,11 @@ class OverFastClient(metaclass=Singleton):
         try:
             response = await self.client.get(url, **kwargs)
         except httpx.TimeoutException as error:
-            # Sometimes Blizzard takes too much time to give a response (player profiles, etc.)
             raise self._blizzard_response_error(
                 status_code=0,
                 error="Blizzard took more than 10 seconds to respond, resulting in a timeout",
             ) from error
         except httpx.RemoteProtocolError as error:
-            # Sometimes Blizzard sends an invalid response (search players, etc.)
             raise self._blizzard_response_error(
                 status_code=0,
                 error="Blizzard closed the connection, no data could be retrieved",
@@ -48,21 +33,14 @@ class OverFastClient(metaclass=Singleton):
 
         logger.debug("OverFast request done !")
 
-        # Make sure we catch HTTP 403 from Blizzard when it happens,
-        # so we don't make any more call before some amount of time
         if response.status_code == status.HTTP_403_FORBIDDEN:
             raise self._blizzard_forbidden_error()
 
         return response
 
-    async def aclose(self) -> None:
-        """Properly close HTTPX Async Client"""
-        await self.client.aclose()
+    # Remove aclose() method; it is not needed anymore, client is managed elsewhere
 
     def _check_rate_limit(self) -> None:
-        """Make sure we're not being rate limited by Blizzard before making
-        any API call. Else, return an HTTP 429 with Retry-After header.
-        """
         if self.cache_manager.is_being_rate_limited():
             raise self._too_many_requests_response(
                 retry_after=self.cache_manager.get_global_rate_limit_remaining_time()
@@ -71,12 +49,10 @@ class OverFastClient(metaclass=Singleton):
     def blizzard_response_error_from_response(
         self, response: httpx.Response
     ) -> HTTPException:
-        """Alias for sending Blizzard error from a request directly"""
         return self._blizzard_response_error(response.status_code, response.text)
 
     @staticmethod
     def _blizzard_response_error(status_code: int, error: str) -> HTTPException:
-        """Retrieve a generic error response when a Blizzard page doesn't load"""
         logger.error(
             "Received an error from Blizzard. HTTP {} : {}",
             status_code,
@@ -89,28 +65,18 @@ class OverFastClient(metaclass=Singleton):
         )
 
     def _blizzard_forbidden_error(self) -> HTTPException:
-        """Retrieve a generic error response when Blizzard returns forbidden error.
-        Also prevent further calls to Blizzard for a given amount of time.
-        """
-
-        # We have to block future requests to Blizzard, cache the information on Redis
         self.cache_manager.set_global_rate_limit()
-
-        # If Discord Webhook configuration is enabled, send a message to the
-        # given channel using Discord Webhook URL
         if settings.discord_message_on_rate_limit:
             send_discord_webhook_message(
                 "Blizzard Rate Limit reached ! Blocking further calls for "
                 f"{settings.blizzard_rate_limit_retry_after} seconds..."
             )
-
         return self._too_many_requests_response(
             retry_after=settings.blizzard_rate_limit_retry_after
         )
 
     @staticmethod
     def _too_many_requests_response(retry_after: int) -> HTTPException:
-        """Generic method to return an HTTP 429 response with Retry-After header"""
         return HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail=(

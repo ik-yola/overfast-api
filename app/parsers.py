@@ -13,14 +13,13 @@ from .helpers import read_csv_data_file
 from .overfast_client import OverFastClient
 from .overfast_logger import logger
 
-
+# Abstract base parser for all parsers (CSV, HTML, API, etc.)
 class AbstractParser(ABC):
-    """Abstract Parser class used to define generic behavior for parsers.
+    """Abstract Parser class to define generic parser behavior.
 
-    A parser is meant to convert some input data into meaningful data
-    in dict/list format. The Parse Cache system is handled here.
+    A parser converts input data to structured dict/list data.
+    This base handles the parse cache system.
     """
-
     cache_manager = CacheManager()
 
     def __init__(self, **_):
@@ -28,87 +27,63 @@ class AbstractParser(ABC):
 
     @abstractmethod
     async def parse(self) -> None:
-        """Method used to retrieve data, parsing it and
-        storing it into self.data attribute.
-        """
+        """Parse data and store in self.data."""
 
     def filter_request_using_query(self, **_) -> dict | list:
-        """If the route contains subroutes accessible using GET queries, this method
-        will filter data using the query data. This method should be
-        redefined in child classes if needed. The default behaviour is to return
-        the parsed data directly.
+        """Filter parsed data if subroutes use GET queries.
+
+        Override in subclasses if needed. Default: return all data.
         """
         return self.data
 
 
 class CSVParser(AbstractParser):
-    """CSV Parser class used to define generic behavior for parsers used
-    to extract data from local CSV files.
-    """
+    """Parser for extracting data from local CSV files."""
 
-    # Name of CSV file to retrieve (without extension), also
-    # used as a sub-folder name for storing related static files
-    filename: str
+    filename: str  # CSV file (without extension), also used for static file folder
 
     async def parse(self) -> None:
-        """Method used to retrieve data from CSV file and storing
-        it into self.data attribute
-        """
-
-        # Read the CSV file
+        """Read and parse CSV data into self.data."""
         self.csv_data = read_csv_data_file(self.filename)
-
-        # Parse the data
         self.data = self.parse_data()
 
     @abstractmethod
     def parse_data(self) -> dict | list[dict]:
-        """Main submethod of the parser, mainly doing the parsing of CSV data and
-        returning a dict, which will be cached and used by the API. Can
-        raise an error if there is an issue when parsing the data.
-        """
+        """Implement this to parse self.csv_data."""
 
     def get_static_url(self, key: str, extension: str = "jpg") -> str:
-        """Method used to retrieve the URL of a local static file"""
+        """Return URL of a local static file."""
         return f"{settings.app_base_url}/static/{self.filename}/{key}.{extension}"
 
 
 class APIParser(AbstractParser):
-    """Abstract API Parser class used to define generic behavior for parsers used
-    to extract data from Blizzard HTML pages. The blizzard URL call is handled here.
+    """Abstract API Parser for scraping Blizzard HTML pages.
+
+    Requires an httpx.AsyncClient (shared by FastAPI app).
     """
-
-    # List of valid HTTP codes when retrieving Blizzard pages
     valid_http_codes: ClassVar[list] = [status.HTTP_200_OK]
-
-    # Request headers to send while making the request
     request_headers: ClassVar[dict] = {}
 
-    def __init__(self, **kwargs):
+    def __init__(self, httpx_client: httpx.AsyncClient, **kwargs):
         self.blizzard_url = self.get_blizzard_url(**kwargs)
-        self.overfast_client = OverFastClient()
+        self.overfast_client = OverFastClient(httpx_client)
         super().__init__(**kwargs)
 
     @property
     @abstractmethod
     def root_path(self) -> str:
-        """Root path of the Blizzard URL containing the data (/en-us/career/, etc."""
+        """Root path of the Blizzard URL (/en-us/career/, etc.)."""
 
     @abstractmethod
     def store_response_data(self, response: httpx.Response) -> None:
-        """Submethod to handle response data storage"""
+        """Save raw response data to instance variables."""
 
     @abstractmethod
     async def parse_data(self) -> dict | list[dict]:
-        """Main submethod of the parser, mainly doing the parsing of input data and
-        returning a dict, which will be cached and used by the API. Can
-        raise an error if there is an issue when parsing the data.
-        """
+        """Parse raw input data and return result."""
 
     async def parse(self) -> None:
-        """Method used to retrieve data from Blizzard (HTML data), parsing it
-        and storing it into self.data attribute.
-        """
+        """Fetch from Blizzard, parse, and store data in self.data."""
         response = await self.overfast_client.get(
             url=self.blizzard_url,
             headers=self.request_headers,
@@ -116,18 +91,12 @@ class APIParser(AbstractParser):
         if response.status_code not in self.valid_http_codes:
             raise self.overfast_client.blizzard_response_error_from_response(response)
 
-        # Store associated request data
+        # Store and parse response data
         self.store_response_data(response)
-
-        # Parse stored request data
         await self.parse_response_data()
 
     def get_blizzard_url(self, **kwargs) -> str:
-        """URL used when requesting data to Blizzard. It usually is a concatenation
-        of root url and query data (kwargs) if the Controller supports it.
-        For example : single hero page (hero key), player career page
-        (player id, etc.). Default is just the blizzard root url.
-        """
+        """Compose Blizzard URL with locale and root path."""
         locale = kwargs.get("locale") or Locale.ENGLISH_US
         return f"{settings.blizzard_host}/{locale}{self.root_path}"
 
@@ -140,10 +109,11 @@ class APIParser(AbstractParser):
 
 
 class HTMLParser(APIParser):
+    """Parser for Blizzard HTML responses (using selectolax)."""
     request_headers: ClassVar[dict] = {"Accept": "text/html"}
 
     def store_response_data(self, response: httpx.Response) -> None:
-        """Initialize parser tag with Blizzard response"""
+        """Save main HTML tag for further parsing."""
         self.create_parser_tag(response.text)
 
     def create_parser_tag(self, html_content: str) -> None:
@@ -153,8 +123,9 @@ class HTMLParser(APIParser):
 
 
 class JSONParser(APIParser):
+    """Parser for Blizzard JSON API responses."""
     request_headers: ClassVar[dict] = {"Accept": "application/json"}
 
     def store_response_data(self, response: httpx.Response) -> None:
-        """Initialize object with Blizzard response"""
+        """Save JSON data for further parsing."""
         self.json_data = response.json()

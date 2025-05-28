@@ -129,3 +129,6 @@ dump.rdb
 
 # Loguru gzipped logs
 *.log.gz
+
+# aws lambda sam 
+.aws-sam/

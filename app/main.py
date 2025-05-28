@@ -4,6 +4,8 @@ import json
 from contextlib import asynccontextmanager
 from typing import Any
 
+import httpx
+
 from fastapi import FastAPI, Request
 from fastapi.exceptions import ResponseValidationError
 from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
@@ -30,15 +32,15 @@ from .roles import router as roles
 
 
 @asynccontextmanager
-async def lifespan(_: FastAPI):  # pragma: no cover
+async def lifespan(app: FastAPI):  # pragma: no cover
     # Instanciate HTTPX Async Client
     logger.info("Instanciating HTTPX AsyncClient...")
-    overfast_client = OverFastClient()
+    app.state.httpx_client = httpx.AsyncClient()
 
     yield
 
     # Properly close HTTPX Async Client
-    await overfast_client.aclose()
+    await app.state.httpx_client.aclose()
 
 
 description = f"""OverFast API provides comprehensive data on Overwatch 2 heroes,

@@ -6,29 +6,41 @@ from app.overfast_logger import logger
 from app.parsers import HTMLParser
 from app.players.parsers.search_data_parser import SearchDataParser
 
-
 class BasePlayerParser(HTMLParser):
-    def __init__(self, **kwargs):
-        super().__init__(**kwargs)
+    """
+    Parser for Overwatch player profiles. Uses Blizzard player and search endpoints,
+    and manages player summary and profile data.
+    """
+
+    def __init__(self, httpx_client, **kwargs):
+        # Accept the injected httpx_client and pass it to parent
+        super().__init__(httpx_client=httpx_client, **kwargs)
+        self.httpx_client = httpx_client  # Save for sub-parsers
         self.player_id = kwargs.get("player_id")
 
-        # Player Data is made of two sets of data :
-        # - summary, retrieve from players search endpoint
-        # - profile, gzipped HTML data from player profile page
+        # Player Data is made of two sets of data:
+        # - summary: retrieved from the player search endpoint
+        # - profile: gzipped HTML data from player profile page
         self.player_data = {"summary": None, "profile": None}
 
     def get_blizzard_url(self, **kwargs) -> str:
+        """
+        Constructs the Blizzard profile URL for the player.
+        """
         return f"{super().get_blizzard_url(**kwargs)}/{kwargs.get('player_id')}/"
 
     def store_response_data(self, response: httpx.Response) -> None:
-        """Store HTML data in player_data to save for Player Cache"""
+        """
+        Stores the HTML response as the player profile, and calls the super method.
+        """
         super().store_response_data(response)
         self.player_data["profile"] = response.text
 
     async def parse(self) -> None:
-        """Main parsing method for player profile routes"""
-
-        # Check if we have up-to-date data in the Player Cache
+        """
+        Main parsing method for player profile routes.
+        Handles caching and up-to-date checks before fetching new data.
+        """
         logger.info("Retrieving Player Summary...")
         self.player_data["summary"] = await self.__retrieve_player_summary_data()
 
@@ -65,9 +77,13 @@ class BasePlayerParser(HTMLParser):
         self.cache_manager.update_player_cache(self.player_id, self.player_data)
 
     async def __retrieve_player_summary_data(self) -> dict | None:
-        """Call Blizzard search page with user name to
-        check last_updated_at and retrieve unlock values
         """
-        player_summary_parser = SearchDataParser(player_id=self.player_id)
+        Call Blizzard search page with user name to
+        check last_updated_at and retrieve unlock values.
+        """
+        # Pass httpx_client to SearchDataParser!
+        player_summary_parser = SearchDataParser(
+            httpx_client=self.httpx_client, player_id=self.player_id
+        )
         await player_summary_parser.parse()
         return player_summary_parser.data

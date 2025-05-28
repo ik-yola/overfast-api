@@ -38,7 +38,12 @@ class CacheManager(metaclass=Singleton):
     """
 
     # Redis server global variable
-    redis_server = redis.Redis(host=settings.redis_host, port=settings.redis_port)
+    if settings.redis_host:
+        redis_client = redis.Redis(host=settings.redis_host, port=settings.redis_port)
+        logger.info(f"Connected to Redis at {settings.redis_host}:{settings.redis_port}")
+    else:
+        redis_client = None  # Redis disabled
+        logger.warning("Redis caching is currently disabled. No cache operations will be performed.")
 
     @staticmethod
     def log_warning(err: redis.exceptions.RedisError) -> None:
@@ -63,11 +68,12 @@ class CacheManager(metaclass=Singleton):
 
     @staticmethod
     def redis_connection_handler(func: Callable):
-        """Wrapper to handle the Redis server connection in the Manager methods.
-        Errors are logged and the process continues even if Redis can't be joined.
-        """
+        """Wrapper to handle Redis connection errors gracefully."""
 
         def wrapper(self, *args, **kwargs):
+            if not self.redis_client:
+                logger.info("Redis is disabled, skipping cache operation: {}", func.__name__)
+                return None
             try:
                 return func(self, *args, **kwargs)
             except redis.exceptions.RedisError as err:
@@ -78,22 +84,16 @@ class CacheManager(metaclass=Singleton):
 
     @redis_connection_handler
     def get_api_cache(self, cache_key: str) -> dict | list | None:
-        """Get the API Cache value associated with a given cache key"""
         api_cache_key = f"{settings.api_cache_key_prefix}:{cache_key}"
-        if not (api_cache := self.redis_server.get(api_cache_key)):
+        api_cache = self.redis_client.get(api_cache_key)
+        if not api_cache:
             return None
-
         return self.__decompress_json_value(api_cache)
 
     @redis_connection_handler
     def update_api_cache(self, cache_key: str, value: dict | list, expire: int) -> None:
-        """Update or set an API Cache value with an expiration value (in seconds)"""
-
-        # Compress the JSON string
         str_value = self.__compress_json_value(value)
-
-        # Store it in API Cache
-        self.redis_server.set(
+        self.redis_client.set(
             f"{settings.api_cache_key_prefix}:{cache_key}",
             str_value,
             ex=expire,
@@ -101,50 +101,45 @@ class CacheManager(metaclass=Singleton):
 
     @redis_connection_handler
     def get_player_cache(self, player_id: str) -> dict | list | None:
-        """Get the Player Cache value associated with a given cache key"""
         player_key = f"{settings.player_cache_key_prefix}:{player_id}"
-        if not (player_cache := self.redis_server.get(player_key)):
+        player_cache = self.redis_client.get(player_key)
+        if not player_cache:
             return None
-
-        # Reset the TTL before returning the value
-        self.redis_server.expire(player_key, settings.player_cache_timeout)
+        self.redis_client.expire(player_key, settings.player_cache_timeout)
         return self.__decompress_json_value(player_cache)
 
     @redis_connection_handler
     def update_player_cache(self, player_id: str, value: dict) -> None:
-        """Update or set a Player Cache value"""
         compressed_value = self.__compress_json_value(value)
-        self.redis_server.set(
+        self.redis_client.set(
             f"{settings.player_cache_key_prefix}:{player_id}",
-            value=compressed_value,
+            compressed_value,
             ex=settings.player_cache_timeout,
         )
 
     @redis_connection_handler
     def get_unlock_data_cache(self, cache_key: str) -> str | None:
-        data_cache = self.redis_server.hget(settings.unlock_data_cache_key, cache_key)
+        data_cache = self.redis_client.hget(settings.unlock_data_cache_key, cache_key)
         return data_cache.decode("utf-8") if data_cache else None
 
     @redis_connection_handler
     def update_unlock_data_cache(self, unlock_data: dict[str, str]) -> None:
-        for data_key, data_value in unlock_data.items():
-            self.redis_server.hset(
-                settings.unlock_data_cache_key,
-                data_key,
-                data_value,
-            )
+        self.redis_client.hset(
+            settings.unlock_data_cache_key,
+            mapping=unlock_data,
+        )
 
     @redis_connection_handler
     def is_being_rate_limited(self) -> bool:
-        return self.redis_server.exists(settings.blizzard_rate_limit_key)
+        return bool(self.redis_client.exists(settings.blizzard_rate_limit_key))
 
     @redis_connection_handler
     def get_global_rate_limit_remaining_time(self) -> int:
-        return self.redis_server.ttl(settings.blizzard_rate_limit_key)
+        return self.redis_client.ttl(settings.blizzard_rate_limit_key)
 
     @redis_connection_handler
     def set_global_rate_limit(self) -> None:
-        self.redis_server.set(
+        self.redis_client.set(
             settings.blizzard_rate_limit_key,
             value=0,
             ex=settings.blizzard_rate_limit_retry_after,

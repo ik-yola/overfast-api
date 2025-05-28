@@ -4,6 +4,7 @@ developer.
 """
 
 import asyncio
+import httpx
 
 from fastapi import HTTPException
 
@@ -16,10 +17,9 @@ from ..enums import HeroKey
 from ..parsers.heroes_parser import HeroesParser
 
 
-async def get_distant_hero_keys(client: OverFastClient) -> set[str]:
+async def get_distant_hero_keys(overfast_client: OverFastClient) -> set[str]:
     """Get a set of Overwatch hero keys from the Blizzard heroes page"""
-    heroes_parser = HeroesParser(client=client)
-
+    heroes_parser = HeroesParser(httpx_client=overfast_client.client)
     try:
         await heroes_parser.parse()
     except HTTPException as error:
@@ -43,23 +43,22 @@ async def main():
     logger.info("OK ! Starting to check if a new hero is here...")
 
     # Instanciate one HTTPX Client to use for all the updates
-    client = OverFastClient()
+    async with httpx.AsyncClient() as shared_httpx_client:
+        overfast_client = OverFastClient(shared_httpx_client)
 
-    distant_hero_keys = await get_distant_hero_keys(client)
-    local_hero_keys = get_local_hero_keys()
+        distant_hero_keys = await get_distant_hero_keys(overfast_client)
+        local_hero_keys = get_local_hero_keys()
 
-    await client.aclose()
-
-    # Compare both sets. If we have a difference, notify the developer
-    new_hero_keys = distant_hero_keys - local_hero_keys
-    if len(new_hero_keys) > 0:
-        logger.info("New hero keys were found : {}", new_hero_keys)
-        send_discord_webhook_message(
-            "New Overwatch heroes detected, please add the following "
-            f"keys into the configuration : {new_hero_keys}",
-        )
-    else:
-        logger.info("No new hero found. Exiting.")
+        # Compare both sets. If we have a difference, notify the developer
+        new_hero_keys = distant_hero_keys - local_hero_keys
+        if len(new_hero_keys) > 0:
+            logger.info("New hero keys were found : {}", new_hero_keys)
+            send_discord_webhook_message(
+                "New Overwatch heroes detected, please add the following "
+                f"keys into the configuration : {new_hero_keys}",
+            )
+        else:
+            logger.info("No new hero found. Exiting.")
 
 
 if __name__ == "__main__":  # pragma: no cover
