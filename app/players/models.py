@@ -85,7 +85,28 @@ class PlayerSearchResult(BaseModel):
     results: list[PlayerShort] = Field(..., description="List of players found")
 
 
-# Player career
+# Multiple profiles response
+class ProfileResponse(BaseModel):
+    """Condensed profile response for multiple profiles endpoint"""
+    endorsementLevel: int = Field(
+        ...,
+        description="Player endorsement level. 0 if no information found.",
+        examples=[3],
+        ge=0,
+        le=5,
+    )
+    season: int = Field(
+        ...,
+        description=(
+            "Last competitive season played by the player on PC. 0 if no information found "
+            "or if the player doesn't play competitive."
+        ),
+        examples=[13],
+        ge=0,
+    )
+
+
+# Rest of your existing models remain the same...
 class PlayerCompetitiveRank(BaseModel):
     division: CompetitiveDivision = Field(
         ...,

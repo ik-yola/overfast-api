@@ -1,12 +1,13 @@
 """Players endpoints router : players search, players career, statistics, etc."""
 
-from typing import Annotated
+from typing import Dict, Annotated
 
-from fastapi import APIRouter, Depends, Path, Query, Request, Response, status
+from fastapi import APIRouter, Depends, Path, Query, Request, Response, HTTPException, status
 
 from app.enums import RouteTag
 from app.helpers import routes_responses as common_routes_responses
 
+from .controllers.get_multiple_profiles_controller import GetMultipleProfilesController
 from .controllers.get_player_career_controller import GetPlayerCareerController
 from .controllers.get_player_career_stats_controller import (
     GetPlayerCareerStatsController,
@@ -28,6 +29,7 @@ from .models import (
     PlayerSearchResult,
     PlayerStatsSummary,
     PlayerSummary,
+    ProfileResponse,
 )
 
 # Custom route responses for player careers
@@ -35,6 +37,19 @@ career_routes_responses = {
     status.HTTP_404_NOT_FOUND: {
         "model": PlayerParserErrorMessage,
         "description": "Player Not Found",
+    },
+    **common_routes_responses,
+}
+
+# Custom route responses for multiple profiles
+multiple_profiles_responses = {
+    status.HTTP_404_NOT_FOUND: {
+        "model": PlayerParserErrorMessage,
+        "description": "One or more profiles not found",
+    },
+    status.HTTP_422_UNPROCESSABLE_ENTITY: {
+        "model": PlayerParserErrorMessage,
+        "description": "Invalid input parameters",
     },
     **common_routes_responses,
 }
@@ -93,6 +108,32 @@ async def get_player_career_common_parameters(
 
 CommonsPlayerCareerDep = Annotated[dict, Depends(get_player_career_common_parameters)]
 
+
+def validate_player_ids(ids: str) -> list[str]:
+    """Validate and parse comma-separated player IDs."""
+    if not ids.strip():
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "`ids` is required and must not be empty."}
+        )
+    
+    player_ids = [player_id.strip() for player_id in ids.split(",") if player_id.strip()]
+    
+    if not player_ids:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "No valid BattleTags provided."}
+        )
+    
+    if len(player_ids) > 20:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail={"error": "Too many player IDs. Maximum 20 allowed per request."}
+        )
+    
+    return player_ids
+
+
 router = APIRouter()
 
 
@@ -134,6 +175,43 @@ async def search_players(
         order_by=order_by,
         offset=offset,
         limit=limit,
+    )
+
+
+@router.get(
+    "/overwatch/profile",
+    responses=multiple_profiles_responses,
+    tags=[RouteTag.PLAYERS],
+    summary="Get multiple Overwatch profiles (condensed)",
+    description=(
+        "Returns condensed profile data for multiple players in a single request. "
+        "This endpoint is optimized for overlay applications that need basic profile "
+        "information (endorsement level and PC competitive season) for multiple players efficiently. "
+        "<br />Query parameter `ids` must be a comma-separated list of BattleTags (use `-` instead of `#`). "
+        "<br />**Note:** This endpoint is protected by API Gateway authentication. "
+        "<br />**Maximum 20 players per request.**"
+    ),
+    response_model=Dict[str, ProfileResponse],
+    operation_id="get_multiple_profiles",
+)
+async def get_multiple_profiles(
+    request: Request,
+    response: Response,
+    ids: Annotated[
+        str,
+        Query(
+            ...,
+            description="Comma-separated BattleTags, e.g. `TeKrop-2217,ikyola-1482`",
+            examples=["TeKrop-2217,ikyola-1482"],
+        ),
+    ],
+) -> Dict[str, ProfileResponse]:
+    # Validate and parse player IDs
+    player_ids = validate_player_ids(ids)
+    
+    # Use the controller to process the request
+    return await GetMultipleProfilesController(request, response).process_request(
+        player_ids=player_ids,
     )
 
 
