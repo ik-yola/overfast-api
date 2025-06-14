@@ -30,3 +30,16 @@ class Map(BaseModel):
         ),
         examples=["JP"],
     )
+
+class OverwatchMap(BaseModel):
+    """Simplified map model for Overwolf application"""
+    name: str = Field(
+        ..., 
+        description="Name of the map", 
+        examples=["Hanamura"]
+    )
+    screenshot: HttpUrl = Field(
+        ...,
+        description="CDN URL of the map screenshot",
+        examples=["https://overfast-api.tekrop.fr/static/maps/hanamura.jpg"],
+    )

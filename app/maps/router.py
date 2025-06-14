@@ -8,8 +8,9 @@ from app.enums import RouteTag
 from app.gamemodes.enums import MapGamemode
 from app.helpers import success_responses
 
+from .controllers.get_overwatch_maps_controller import GetOverwatchMapsController
 from .controllers.list_maps_controller import ListMapsController
-from .models import Map
+from .models import Map, OverwatchMap
 
 router = APIRouter()
 
@@ -39,3 +40,25 @@ async def list_maps(
     return await ListMapsController(request, response).process_request(
         gamemode=gamemode
     )
+
+
+@router.get(
+    "/overwatch/maps",
+    responses=success_responses,
+    tags=[RouteTag.MAPS],
+    summary="Get Overwatch maps (simplified)",
+    description=(
+        "Get a simplified list of Overwatch maps with only name and screenshot. "
+        "This endpoint is optimized for overlay applications that need basic map "
+        "information with CDN image URLs for display purposes. "
+        "<br />**Note:** This endpoint is protected by API Gateway authentication. "
+    ),
+    response_model=list[OverwatchMap],
+    operation_id="get_overwatch_maps",
+)
+async def get_overwatch_maps(
+    request: Request,
+    response: Response,
+) -> list[OverwatchMap]:
+    """Get simplified maps data for Overwolf overlay application."""
+    return await GetOverwatchMapsController(request, response).process_request()
